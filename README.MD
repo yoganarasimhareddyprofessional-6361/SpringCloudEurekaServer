@@ -665,3 +665,398 @@ ORDER PLACED WITH => WELCOME TO CART SERVICE =>8083
 | **Algorithm Used** | Round Robin (default) |
 
 ---
+
+# 🛠️ 3) **OpenFeign Client**
+
+---
+
+# ☁️ Microservices Communication — *FeignClient (Open Feign)*
+
+---
+
+## 🧩 What Is Feign Client?
+
+**Feign Client** (also known as **Open Feign**) is a **declarative REST client** provided by **Spring Cloud** that allows you to call other microservices using **Java interfaces** — *no `RestTemplate` or manual HTTP logic needed.*
+
+It’s built on top of:
+
+- 🧠 **Spring Cloud LoadBalancer**
+- ⚙️ **Netflix Ribbon (legacy, removed)**
+
+and internally generates **dynamic proxy classes** at runtime to handle service discovery and HTTP communication automatically.
+
+---
+
+### 🚀 Key Highlights
+
+| Feature | Description |
+| --- | --- |
+| **Integration** | Third-party library integrated with Spring Cloud |
+| **Boilerplate-Free** | No need for manual RestTemplate or LoadBalancer code |
+| **Dynamic Proxy** | Generates code at runtime |
+| **Service-Aware** | Uses Eureka to find service instances |
+| **Load Balancing** | Uses Spring Cloud LoadBalancer internally |
+
+---
+
+## 🧱 Required Components
+
+| Component | Role | Port | Notes |
+| --- | --- | --- | --- |
+| **Eureka Server** | Service registry | `8761` | Central service registry |
+| **Cart Service** | Producer (Provider) | `8081`, `8082`, `8083` | Exposes REST APIs |
+| **Order Service** | Consumer | `9091` | Uses FeignClient to call Cart Service |
+
+---
+
+## ⚙️ How Feign Client Works
+
+1️⃣ Developer defines a **Java interface** annotated with `@FeignClient("SERVICE-ID")`.
+
+2️⃣ Feign dynamically creates an implementation at runtime.
+
+3️⃣ The generated proxy uses **Eureka** and **Spring Cloud LoadBalancer** to find a healthy instance.
+
+4️⃣ Feign makes an HTTP call to the remote microservice and maps the response to Java objects.
+
+---
+
+## ☁️ Feign Client Architecture Diagram
+
+✅ Fully validated and Notion-renderable:
+
+```mermaid
+graph TD
+
+%% ================================
+%%     SPRING CLOUD OPEN FEIGN
+%% ================================
+
+subgraph Eureka["Eureka Server (8761)"]
+    ES[(Service Registry)]
+end
+
+subgraph CartServices["CART-SERVICE Instances"]
+    C1["Cart Service #1 (8081)"]
+    C2["Cart Service #2 (8082)"]
+    C3["Cart Service #3 (8083)"]
+end
+
+subgraph OrderService["ORDER-SERVICE (9091)"]
+    OAPI["Feign Client Proxy"]
+end
+
+%% Connections
+OAPI -->|"Service Discovery Request"| ES
+ES -->|"ServiceInstance Info (Load Balanced)"| OAPI
+
+OAPI -->|"Auto-generated HTTP Call via Feign"| C1
+OAPI -->|"Auto-generated HTTP Call via Feign"| C2
+OAPI -->|"Auto-generated HTTP Call via Feign"| C3
+
+C1 -->|"Response (JSON / Object)"| OAPI
+C2 -->|"Response (JSON / Object)"| OAPI
+C3 -->|"Response (JSON / Object)"| OAPI
+
+```
+
+> 🧠 Flow Summary:
+>
+> - `OrderService` uses FeignClient interface → Spring Cloud Feign proxy invokes HTTP call.
+> - **Eureka** provides the target service instance (Round Robin).
+> - **Feign** handles serialization, deserialization, and mapping automatically.
+
+---
+
+## 🏗️ Implementation Overview
+
+### 1️⃣ Eureka Server
+
+**Project:** `SpringCloudEurekaServer`
+
+**Dependency:** Eureka Server
+
+**Main:** `@EnableEurekaServer`
+
+**`application.properties`**
+
+```
+server.port=8761
+eureka.client.register-with-eureka=false
+eureka.client.fetch-registry=false
+
+```
+
+---
+
+### 2️⃣ Cart Service (Producer)
+
+**Project:** `SpringCloudCartService`
+
+**Dependencies:** Spring Web, Eureka Discovery Client, Lombok
+
+**Main:** `@EnableDiscoveryClient`
+
+**`application.properties`**
+
+```
+# Example for 3 different instances
+server.port=8081  # change to 8082, 8083 for other runs
+
+spring.application.name=CART-SERVICE
+eureka.client.service-url.defaultZone=http://localhost:8761/eureka
+
+# Unique instance ID
+eureka.instance.instance-id=${spring.application.name}:${random.value}
+
+```
+
+**`Cart.java`**
+
+```java
+package com.yog.eureka.feignclient.springcloudcartservicefeignclient.entity;
+
+import lombok.Data;
+
+@Data
+public class Cart {
+
+    private Integer cartId;
+    private String cartCode;
+    private Double cartCost;
+}
+```
+
+**`CartRestController.java`**
+
+```java
+package com.yog.eureka.feignclient.springcloudcartservicefeignclient.controller;
+
+import com.yog.eureka.feignclient.springcloudcartservicefeignclient.entity.Cart;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/cart")
+public class CartRestController {
+
+    @Value("${server.port}")
+    private String port;
+
+    @GetMapping("/info")
+    public ResponseEntity<String> showMessage() {
+        return ResponseEntity.ok("WELCOME TO CART SERVICE =>" + port);
+    }
+
+    @GetMapping("/find/{id}")
+    public ResponseEntity<Cart> getCartById(@PathVariable("id") Integer id) {
+        Cart cart = new Cart();
+        cart.setCartId(id);
+        cart.setCartCost(2300.0);
+        cart.setCartCode("TEST");
+        return ResponseEntity.ok(cart);
+    }
+
+    @PostMapping("/create")
+    public ResponseEntity<String> addToCart(@RequestBody Cart cart) {
+        return ResponseEntity.ok("ADDED TO CART => " + cart);
+    }
+}
+```
+
+---
+
+### 3️⃣ Order Service (Consumer)
+
+**Project:** `SpringCloudOrderService`
+
+**Dependencies:** Spring Web, Eureka Discovery Client, Open Feign, Lombok
+
+**Main:**
+
+```java
+@EnableDiscoveryClient
+@EnableFeignClients
+@SpringBootApplication
+public class OrderServiceApplication { ... }
+
+```
+
+**`application.properties`**
+
+```
+#PORT
+server.port=9091
+
+# ServiceId (app Name)
+spring.application.name=ORDER-SERVICE
+
+#Provide eureka location
+eureka.client.service-url.defaultZone=http://localhost:8761/eureka
+
+```
+
+**`Cart.java`**
+
+```java
+package com.yog.eureka.feignclient.springcloudorderservicefeignclient.entity;
+
+import lombok.Data;
+
+@Data
+public class Cart {
+
+    private Integer cartId;
+    private String cartCode;
+    private Double cartCost;
+}
+```
+
+---
+
+### 🧠 Feign Client Interface
+Note : methods can have different names btw services but signature should be exactly same
+
+**`CatConsumerFeign.java`**
+
+```java
+package com.yog.eureka.feignclient.springcloudorderservicefeignclient.consumer;
+
+import com.yog.eureka.feignclient.springcloudorderservicefeignclient.entity.Cart;
+import org.springframework.cloud.openfeign.FeignClient;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+
+@FeignClient("CART-SERVICE")
+public interface CartConsumerFeign {
+
+    @GetMapping("/cart/info")
+    public ResponseEntity<String> showMessage();
+
+    @GetMapping("/cart/find/{id}")
+    public ResponseEntity<Cart> getCartById(
+            @PathVariable("id") Integer id);
+
+    @PostMapping("/cart/create")
+    public ResponseEntity<String> addToCart(
+            @RequestBody Cart cart);
+}
+```
+
+---
+
+### 🧱 Controller (Consumer Side)
+
+**`OrderRestController.java`**
+
+```java
+package com.yog.eureka.feignclient.springcloudorderservicefeignclient;
+
+import com.yog.eureka.feignclient.springcloudorderservicefeignclient.consumer.CartConsumerFeign;
+import com.yog.eureka.feignclient.springcloudorderservicefeignclient.entity.Cart;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequestMapping("/order")
+public class OrderRestController {
+
+    @Autowired
+    private CartConsumerFeign consumer;
+
+    @GetMapping("/place")
+    public ResponseEntity<String> placeOrder() {
+        String cartResp = consumer.showMessage().getBody();
+        return ResponseEntity.ok("ORDER PLACED WITH => " + cartResp);
+    }
+
+    @GetMapping("/fetch/{id}")
+    public ResponseEntity<String> fetchOrderWithCart(
+            @PathVariable("id") Integer id
+    ) {
+        Cart cob = consumer.getCartById(id).getBody();
+        return ResponseEntity.ok("ORDER WITH CART DATA => " + cob);
+    }
+
+    @PostMapping("/addToCart")
+    public ResponseEntity<String> addToCart(
+            @RequestBody Cart cart
+    ) {
+        String cartResp = consumer.addToCart(cart).getBody();
+        return ResponseEntity.ok("ORDER WITH => " + cartResp);
+    }
+}
+
+```
+
+---
+
+## ▶️ Execution Order
+
+1️⃣ Run **Eureka Server**
+
+2️⃣ Run **Cart Service** (multiple instances on ports `8081`, `8082`, `8083`)
+
+3️⃣ Run **Order Service**
+
+4️⃣ Open **Eureka Dashboard:** `http://localhost:8761`
+
+5️⃣ Hit endpoints:
+
+- `GET http://localhost:9091/order/place`
+- `GET http://localhost:9091/order/fetch/1190`
+- `POST http://localhost:9091/order/addToCart`
+
+    ```json
+    {
+      "cartId": 1019,
+      "cartCode": "AA",
+      "cartCost": 9900.0
+    }
+    
+    ```
+
+
+**✅ Output Example**
+
+```
+ORDER PLACED WITH => WELCOME TO CART SERVICE =>8083
+ORDER WITH CART DATA => Cart(cartId=1190, cartCode=TEST, cartCost=2300.0)
+ORDER WITH => ADDED TO CART => Cart(cartId=1019, cartCode=AA, cartCost=9900.0)
+
+```
+
+---
+
+## 💬 Q&A Summary
+
+| Question | Answer |
+| --- | --- |
+| **Why FeignClient?** | Simplifies communication — no manual RestTemplate or LoadBalancer needed. |
+| **Is it dynamic?** | Yes, Feign generates a proxy implementation at runtime. |
+| **Does it use Eureka?** | ✅ Yes, for service discovery. |
+| **Does it support load balancing?** | ✅ Yes, uses Spring Cloud LoadBalancer internally. |
+| **Does it replace RestTemplate?** | ✅ Yes — Feign handles all HTTP calls automatically. |
+
+---
+
+## 🧠 Summary
+
+| Concept | Description |
+| --- | --- |
+| **DiscoveryClient** | Manual discovery, manual HTTP calls |
+| **LoadBalancerClient** | Auto-selects instance, still needs RestTemplate |
+| **FeignClient (Open Feign)** | Auto-discovery, auto-load balancing, no manual HTTP code |
+| **Eureka Server** | Central registry for all microservices |
+
+---
