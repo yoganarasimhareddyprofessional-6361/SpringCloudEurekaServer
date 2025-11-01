@@ -346,3 +346,322 @@ ORDER PLACED WITH => WELCOME TO CART SERVICE
 | **Order → Cart flow** | DiscoveryClient + RestTemplate based call |
 
 ---
+
+
+
+
+# 🛠️ 2) **LoadBalancerClient**
+
+---
+
+# ⚙️ Microservices Communication — *LoadBalancerClient*
+
+---
+
+## 🧩 Why Load Balancing Matters
+
+When a microservice application runs **multiple instances** (on different servers or ports), it’s to:
+
+- ⚡ **Improve performance**
+- ⚖️ **Distribute load evenly** among instances
+- 🧠 **Increase availability** and fault tolerance
+
+However, when using **DiscoveryClient**, it only gives back a **List of all ServiceInstances**, and you have to choose one manually.
+
+That’s where `LoadBalancerClient` helps.
+
+---
+
+## 🧠 What is LoadBalancerClient?
+
+**LoadBalancerClient** is a **Spring Cloud** interface that automatically chooses **one instance** of a service with the least load factor.
+
+> Internally, it follows a Round Robin or similar load-balancing algorithm.
+>
+
+---
+
+### 🚀 Key Points
+
+1️⃣ If you run the same MS multiple times → multiple **instances** are created.
+
+2️⃣ `DiscoveryClient` returns all instances — but **does not** help in choosing one.
+
+3️⃣ `LoadBalancerClient` picks **one instance** automatically.
+
+4️⃣ Used for **Client-Side Load Balancing**.
+
+5️⃣ When using multiple instances, configure a unique instance ID:
+
+```
+eureka.instance.instance-id=${spring.application.name}:${random.value}
+
+```
+
+---
+
+## 📦 Components Overview
+
+| Component | Role | Port | Notes |
+| --- | --- | --- | --- |
+| **Eureka Server** | Service Registry | `8761` | Stores service metadata |
+| **Cart Service** | Producer | `8081`, `8082`, `8083` | Registered multiple times |
+| **Order Service** | Consumer | `9091` | Uses LoadBalancerClient |
+
+---
+
+## ☁️ How LoadBalancerClient Works
+
+```mermaid
+graph TD
+
+%% ===========================
+%%  SPRING CLOUD LOADBALANCER
+%% ===========================
+
+subgraph Eureka["Eureka Server (8761)"]
+    ES[(Service Registry)]
+end
+
+subgraph CartServices["CART-SERVICE Instances"]
+    C1["Cart Service #1 (8081)"]
+    C2["Cart Service #2 (8082)"]
+    C3["Cart Service #3 (8083)"]
+end
+
+subgraph OrderService["ORDER-SERVICE (9091)"]
+    OAPI["/GET /order/place"]
+end
+
+%% Connections
+OAPI -->|"Request ServiceInstance"| ES
+ES -->|"One instance (Round Robin)"| OAPI
+
+%% Separate HTTP calls for visualization
+OAPI -->|"HTTP Request via RestTemplate"| C1
+OAPI -->|"HTTP Request via RestTemplate"| C2
+OAPI -->|"HTTP Request via RestTemplate"| C3
+
+C1 -->|"Response"| OAPI
+C2 -->|"Response"| OAPI
+C3 -->|"Response"| OAPI
+
+```
+
+> ⚖️ Each request from Order Service may go to a different Cart Service instance, depending on the round-robin selection.
+>
+
+---
+
+## 🏗️ Implementation Steps
+
+### 1️⃣ Eureka Server
+
+**Project:** `SpringCloudEurekaServer`
+
+**Dependency:** Eureka Server
+
+**Main:** `@EnableEurekaServer`
+
+**`application.properties`**
+
+```
+spring.application.name=SpringCloudEurekaServer
+
+# RECOMANDED PORT NUMBER
+server.port=8761
+
+# DISABLE SELF REGISTER
+eureka.client.register-with-eureka=false
+eureka.client.fetch-registry=false
+```
+
+---
+
+### 2️⃣ Cart Service (Producer)
+
+**Project:** `SpringCloudCartService`
+
+**Dependencies:** Spring Web, Eureka Discovery Client
+
+**Main:** `@EnableDiscoveryClient`
+
+**`application.properties`**
+
+```
+# Example for 3 different instances
+server.port=8081  # change to 8082, 8083 for other runs
+
+spring.application.name=CART-SERVICE
+eureka.client.service-url.defaultZone=http://localhost:8761/eureka
+
+# Unique instance ID
+eureka.instance.instance-id=${spring.application.name}:${random.value}
+
+```
+
+**`CartRestController.java`**
+
+```java
+package com.yog.eureka.loadbalclient.springcloudcartserviceloadbalclient.controller;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequestMapping("/cart")
+public class CartRestController {
+
+    @Value("${server.port}")
+    private String port;
+
+    @GetMapping("/info")
+    public ResponseEntity<String> showMessage() {
+        return ResponseEntity.ok("WELCOME TO CART SERVICE =>" + port);
+    }
+}
+```
+
+---
+
+### 3️⃣ Order Service (Consumer)
+
+**Project:** `SpringCloudOrderService`
+
+**Dependencies:** Spring Web, Eureka Discovery Client, Spring Cloud LoadBalancer
+
+**Main:** `@EnableDiscoveryClient`
+
+**`application.properties`**
+
+```
+server.port=9091
+spring.application.name=ORDER-SERVICE
+eureka.client.service-url.defaultZone=http://localhost:8761/eureka
+
+```
+
+**`CartConsumer.java`**
+
+```java
+package com.yog.eureka.loadbalclient.springcloudorderserviceloadbalclient.consumer;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cloud.client.ServiceInstance;
+import org.springframework.cloud.client.loadbalancer.LoadBalancerClient;
+import org.springframework.http.ResponseEntity;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestTemplate;
+
+@Component
+public class CartConsumer {
+
+    @Autowired
+    private LoadBalancerClient loadBalancerClient;
+
+    public String getCartResponse() {
+        ServiceInstance choose = loadBalancerClient.choose("CART-SERVICE");
+        String url = choose.getUri() + "/cart/info";
+        System.out.println("*********************** " + url + " **********************");
+
+        RestTemplate rt = new RestTemplate();
+        ResponseEntity<String> response = rt.getForEntity(url, String.class);
+        return response.getBody();
+    }
+}
+
+```
+
+**`OrderRestController.java`**
+
+```java
+package com.yog.eureka.loadbalclient.springcloudorderserviceloadbalclient;
+
+import com.yog.eureka.loadbalclient.springcloudorderserviceloadbalclient.consumer.CartConsumer;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequestMapping("/order")
+public class OrderRestController {
+
+    @Autowired
+    private CartConsumer consumer;
+
+    @GetMapping("/place")
+    public ResponseEntity<String> placeOrder() {
+        String cartResp = consumer.getCartResponse();
+        return ResponseEntity.ok("ORDER PLACED WITH => " + cartResp);
+    }
+
+}
+
+```
+
+---
+
+## ▶️ Execution Order
+
+1️⃣ Start **Eureka Server**
+
+2️⃣ Run **Cart Service** three times on different ports (`8081`, `8082`, `8083`)
+
+![image.png](attachment:99cae972-6c09-4023-901a-46a0779b4e3d:image.png)
+
+3️⃣ Start **Order Service**
+
+4️⃣ Open **Eureka Dashboard:**
+
+🔗 `http://localhost:8761`
+
+5️⃣ Confirm all services are registered.
+
+6️⃣ Hit endpoint:
+
+🔗 `http://localhost:9091/order/place`
+
+Each time you refresh, you’ll see responses like:
+
+```
+ORDER PLACED WITH => WELCOME TO CART SERVICE =>8081
+ORDER PLACED WITH => WELCOME TO CART SERVICE =>8082
+ORDER PLACED WITH => WELCOME TO CART SERVICE =>8083
+
+```
+
+> 💡 Notice the changing port → means LoadBalancerClient is distributing requests across instances.
+>
+
+---
+
+## 💬 Q&A Summary
+
+| Question | Answer |
+| --- | --- |
+| **Why use LoadBalancerClient?** | To work with multiple instances of the same service. Performs **Client-Side Load Balancing**. |
+| **Old Load Balancer Vendor?** | 🎯 Ribbon (now deprecated). |
+| **Current Load Balancer?** | 🆕 Spring Cloud LoadBalancer. |
+| **How many instances are returned per request?** | Only **one** (based on algorithm). |
+| **Is RestTemplate still required?** | ✅ Yes — LoadBalancerClient only picks the instance; HTTP calls still use RestTemplate. |
+
+---
+
+## 🧠 Summary
+
+| Concept | Description |
+| --- | --- |
+| **DiscoveryClient** | Lists all service instances from Eureka |
+| **LoadBalancerClient** | Picks one instance automatically |
+| **Eureka Server** | Central registry |
+| **RestTemplate** | Makes HTTP call |
+| **Cart Service** | Producer service |
+| **Order Service** | Consumer service |
+| **Algorithm Used** | Round Robin (default) |
+
+---
